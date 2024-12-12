@@ -8,29 +8,55 @@ import (
 	"github.com/disgoorg/disgo/events"
 )
 
-func Queue(event *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, b *twm.Bot) {
-	player := b.Lavalink.Player(*event.GuildID())
-
-	if !player.State().Connected {
-		event.CreateMessage(discord.MessageCreate{
-			Content: "Player is inactive. Join a voice channel and use `/play` first.",
+func Queue(e *events.ApplicationCommandInteractionCreate, data *discord.SlashCommandInteractionData, b *twm.Bot) {
+	memberState, ok := b.Client.Caches().VoiceState(*e.GuildID(), b.Client.ID())
+	if !ok {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "Something went wrong while processing your request. Request ID:",
 			Flags:   discord.MessageFlagEphemeral,
 		})
 		return
 	}
 
-	if inVc := b.CheckIfUserInVc(*event.GuildID(), event.User().ID); !inVc {
-		event.CreateMessage(discord.MessageCreate{
+	if memberState.ChannelID == nil {
+		e.CreateMessage(discord.MessageCreate{
 			Content: "You must be in a voice channel to use this command.",
 			Flags:   discord.MessageFlagEphemeral,
 		})
 		return
 	}
 
-	queue := b.Queues.Get(event.GuildID().String())
+	botState, ok := b.Client.Caches().VoiceState(*e.GuildID(), b.Client.ID())
+	if !ok {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "Something went wrong while processing your request. Request ID:",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	if memberState.ChannelID != botState.ChannelID && botState.ChannelID != nil {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "You must be in the same voice channel to use this command.",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	player := b.Lavalink.Player(*e.GuildID())
+
+	if !player.State().Connected {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "The music player isn't active. Join a voice channel and use `/play` first.",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	queue := b.Queues.Get(e.GuildID().String())
 
 	if len(queue.Tracks) <= 0 {
-		event.CreateMessage(discord.MessageCreate{
+		e.CreateMessage(discord.MessageCreate{
 			Content: "The queue is empty. Add something using the `/play` command.",
 			Flags:   discord.MessageFlagEphemeral,
 		})
@@ -59,14 +85,14 @@ func Queue(event *events.ApplicationCommandInteractionCreate, data discord.Slash
 	embeds, ok := b.CreateQueueMessage(queue, 6)
 
 	if !ok {
-		event.CreateMessage(discord.MessageCreate{
+		e.CreateMessage(discord.MessageCreate{
 			Content: "Failed to generate queue embeds",
 			Flags:   discord.MessageFlagEphemeral,
 		})
 		return
 	}
 
-	err := event.CreateMessage(discord.MessageCreate{
+	err := e.CreateMessage(discord.MessageCreate{
 		Embeds: []discord.Embed{
 			embeds[0],
 		},

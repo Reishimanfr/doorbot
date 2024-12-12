@@ -7,7 +7,7 @@ import (
 	"github.com/disgoorg/disgo/events"
 )
 
-func SetUsername(event *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, b *twm.Bot) {
+func SetUsername(event *events.ApplicationCommandInteractionCreate, data *discord.SlashCommandInteractionData, b *twm.Bot) {
 	newUsername, ok := data.OptString("username")
 
 	if !ok {

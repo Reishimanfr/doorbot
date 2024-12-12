@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func UploadEmojis(content embed.FS, client bot.Client, db *gorm.DB) {
+func UploadEmoji(content embed.FS, client bot.Client, db *gorm.DB) {
 	emojiFiles, err := content.ReadDir("assets")
 	if err != nil {
 		slog.Error("Error reading assets directory", slog.Any("Error", err))

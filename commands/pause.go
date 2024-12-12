@@ -9,30 +9,53 @@ import (
 	"github.com/disgoorg/disgolink/v3/lavalink"
 )
 
-func Pause(event *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, b *twm.Bot) {
-	ok := b.CheckIfUserInVc(*event.GuildID(), event.User().ID)
-
+func Pause(e *events.ApplicationCommandInteractionCreate, data *discord.SlashCommandInteractionData, b *twm.Bot) {
+	memberState, ok := b.Client.Caches().VoiceState(*e.GuildID(), b.Client.ID())
 	if !ok {
-		event.CreateMessage(discord.NewMessageCreateBuilder().
-			SetContent("You must be in a voice channel to use this command.").
-			SetEphemeral(true).
-			Build(),
-		)
+		e.CreateMessage(discord.MessageCreate{
+			Content: "Something went wrong while processing your request. Request ID:",
+			Flags:   discord.MessageFlagEphemeral,
+		})
 		return
 	}
 
-	player := b.Lavalink.Player(*event.GuildID())
+	if memberState.ChannelID == nil {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "You must be in a voice channel to use this command.",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	botState, ok := b.Client.Caches().VoiceState(*e.GuildID(), b.Client.ID())
+	if !ok {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "Something went wrong while processing your request. Request ID:",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	if memberState.ChannelID != botState.ChannelID && botState.ChannelID != nil {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "You must be in the same voice channel to use this command.",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	player := b.Lavalink.Player(*e.GuildID())
 
 	if !player.State().Connected {
-		event.CreateMessage(discord.MessageCreate{
-			Content: "Player is inactive. Join a voice channel and use `/play` first.",
+		e.CreateMessage(discord.MessageCreate{
+			Content: "The music player isn't active. Join a voice channel and `/play` something first!",
 			Flags:   discord.MessageFlagEphemeral,
 		})
 		return
 	}
 
 	if player.Track() == nil {
-		event.CreateMessage(discord.MessageCreate{
+		e.CreateMessage(discord.MessageCreate{
 			Content: "Nothing is playing right now.",
 			Flags:   discord.MessageFlagEphemeral,
 		})
@@ -42,16 +65,15 @@ func Pause(event *events.ApplicationCommandInteractionCreate, data discord.Slash
 	responseString := ""
 
 	if player.Paused() {
-		responseString = "Resumed playback"
+		responseString = "Playback resumed"
 		player.Update(context.TODO(), lavalink.WithPaused(false))
 	} else {
-		responseString = "Paused playback"
+		responseString = "Playback paused"
 		player.Update(context.TODO(), lavalink.WithPaused(true))
 	}
 
-	event.CreateMessage(discord.NewMessageCreateBuilder().
-		SetContent(responseString).
-		SetEphemeral(true).
-		Build(),
-	)
+	e.CreateMessage(discord.MessageCreate{
+		Content: responseString,
+		Flags:   discord.MessageFlagEphemeral,
+	})
 }

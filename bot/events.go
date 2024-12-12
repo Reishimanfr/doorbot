@@ -18,7 +18,7 @@ func (b *Bot) OnApplicationCommand(event *events.ApplicationCommandInteractionCr
 		return
 	}
 
-	handler(event, data, b)
+	handler(event, &data, b)
 }
 
 func (b *Bot) OnVoiceStateUpdate(event *events.GuildVoiceStateUpdate) {
@@ -43,4 +43,17 @@ func (b *Bot) OnVoiceStateUpdate(event *events.GuildVoiceStateUpdate) {
 
 func (b *Bot) OnVoiceServerUpdate(event *events.VoiceServerUpdate) {
 	b.Lavalink.OnVoiceServerUpdate(context.TODO(), event.GuildID, event.Token, *event.Endpoint)
+}
+
+func (b *Bot) OnComponentInteraction(event *events.ComponentInteractionCreate) {
+	id := event.Data.CustomID()
+
+	handler, ok := b.ComponentHandlers[id]
+
+	if !ok {
+		slog.Warn("No handler for component", slog.String("ComponentId", id))
+		return
+	}
+
+	handler(event, &event.Data, b)
 }

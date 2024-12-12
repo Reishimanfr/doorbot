@@ -1,8 +1,8 @@
 package twm
 
 import (
-	"bash06/the-world-machine-v2/core"
 	"bash06/the-world-machine-v2/database"
+	"bash06/the-world-machine-v2/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,14 +14,26 @@ import (
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
 	"github.com/disgoorg/disgolink/v3/disgolink"
-	"github.com/disgoorg/disgolink/v3/lavalink"
 	"github.com/disgoorg/snowflake/v2"
 	"gorm.io/gorm"
 )
 
+type Const struct {
+}
+
 const (
-	idlingIconUrl = "https://images-ext-1.discordapp.net/external/IUsiwXR1vQ0aSvxs5KRTrDYZQs0cdtti0j5mH6_2sHE/%3Fsize%3D96%26quality%3Dlossless/https/cdn.discordapp.com/emojis/1027492467337080872.webp"
-	activeIconUrl = "https://media.discordapp.net/attachments/968786035788120099/1134526510334738504/niko.gif"
+	purpleInt        = 9109708
+	redInt           = 15548997
+	playingString    = "Now playing..."
+	liveStreamString = "🎥🔴 Playing a live stream..."
+	pausedString     = "Paused..."
+	// TODO: this should just be an emoji
+	idlingIconURL = "https://images-ext-1.discordapp.net/external/IUsiwXR1vQ0aSvxs5KRTrDYZQs0cdtti0j5mH6_2sHE/%3Fsize%3D96%26quality%3Dlossless/https/cdn.discordapp.com/emojis/1027492467337080872.webp"
+	activeIconURL = "https://media.discordapp.net/attachments/968786035788120099/1134526510334738504/niko.gif"
+)
+
+var (
+	emptyEmbed = discord.Embed{}
 )
 
 type PlayerMessageInfo struct {
@@ -32,19 +44,25 @@ type PlayerMessageInfo struct {
 type Bot struct {
 	Client            bot.Client
 	Lavalink          disgolink.Client
-	CommandHandlers   map[string]func(event *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, bot *Bot)
-	ComponentHandlers map[string]func(event *events.ComponentInteractionCreate, data *discord.ComponentInteractionData)
+	CommandHandlers   map[string]func(event *events.ApplicationCommandInteractionCreate, data *discord.SlashCommandInteractionData, bot *Bot)
+	ComponentHandlers map[string]func(event *events.ComponentInteractionCreate, data *discord.ComponentInteractionData, bot *Bot)
 	Queues            *QueueManager
 	Db                *gorm.DB
 	PlayerMessages    map[string]PlayerMessageInfo
 	ApplicationEmojis map[string]string // map[Emoji name]Formatted discord emoji
 }
 
-type AdditionalTrackData struct {
-	Member *discord.Member
+type TrackRequester struct {
+	Id        snowflake.ID
+	Username  string
+	AvatarURL string
 }
 
-func NewBot(db *gorm.DB) *Bot {
+type MoreTrackData struct {
+	Req TrackRequester
+}
+
+func New(db *gorm.DB) *Bot {
 	emojisRecord := make([]database.ApplicationEmoji, 0)
 	db.Find(&emojisRecord)
 
@@ -59,77 +77,128 @@ func NewBot(db *gorm.DB) *Bot {
 			Queues: make(map[string]*Queue),
 		},
 		PlayerMessages:    make(map[string]PlayerMessageInfo, 0),
-		CommandHandlers:   make(map[string]func(event *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, b *Bot), 0),
-		ComponentHandlers: make(map[string]func(event *events.ComponentInteractionCreate, data *discord.ComponentInteractionData), 0),
+		CommandHandlers:   make(map[string]func(event *events.ApplicationCommandInteractionCreate, data *discord.SlashCommandInteractionData, b *Bot), 0),
+		ComponentHandlers: make(map[string]func(event *events.ComponentInteractionCreate, data *discord.ComponentInteractionData, b *Bot), 0),
 		ApplicationEmojis: emojis,
 		Db:                db,
 	}
 }
 
-func (b *Bot) UpdatePlayerMessage(player disgolink.Player, track *lavalink.Track, idling bool) error {
-	info := b.PlayerMessages[player.GuildID().String()]
-	embed, ok := b.CreateNowPlayingMessage(player, track, idling)
+// Music player methods
+func (b *Bot) CreatePlayerMessage(guildId snowflake.ID, idling bool) (discord.Embed, bool) {
+	player := b.Lavalink.Player(guildId)
+	queue := b.Queues.Get(guildId.String())
+	track := player.Track()
+
+	if idling {
+		if queue.PreviousTrack == nil {
+			return discord.Embed{
+				Author: &discord.EmbedAuthor{
+					Name:    "Idling...",
+					IconURL: idlingIconURL,
+					URL:     "",
+				},
+				Description: "`No previous track found...`",
+			}, true
+		}
+
+		prev := queue.PreviousTrack
+		info := prev.Info
+
+		var more MoreTrackData
+
+		err := json.Unmarshal(prev.UserData, &more)
+		if err != nil {
+			return emptyEmbed, false
+		}
+
+		bar := b.CreateProgressBar(player, true)
+
+		return discord.Embed{
+			Author: &discord.EmbedAuthor{
+				Name:    "Idling...",
+				IconURL: idlingIconURL,
+			},
+			Title:       info.Title,
+			URL:         *info.URI,
+			Description: fmt.Sprintf("By: **%v**\n\n%v\n%s/%s", info.Author, bar, utils.FormatTime(info.Length), utils.FormatTime(info.Length)),
+			Footer: &discord.EmbedFooter{
+				Text:    "Requested by " + more.Req.Username,
+				IconURL: more.Req.AvatarURL,
+			},
+		}, true
+	}
+
+	if track == nil {
+		return emptyEmbed, true
+	}
+
+	info := track.Info
+
+	bar := b.CreateProgressBar(player, false)
+
+	embedColor := purpleInt
+	title := playingString
+	description := fmt.Sprintf("By **%s**\n\n%v\n%s/%s", info.Author, bar, utils.FormatTime(player.Position()), utils.FormatTime(info.Length))
+
+	if info.IsStream {
+		embedColor = redInt
+		title = liveStreamString
+		description = "By: **" + info.Author + "**"
+	}
+
+	if player.Paused() {
+		title = "Paused..."
+	}
+
+	var more MoreTrackData
+
+	err := json.Unmarshal(track.UserData, &more)
+	if err != nil {
+		return emptyEmbed, false
+	}
+
+	return discord.Embed{
+		Author: &discord.EmbedAuthor{
+			Name:    title,
+			URL:     *info.URI,
+			IconURL: activeIconURL,
+		},
+		Title:       info.Title,
+		URL:         *info.URI,
+		Description: description,
+		Thumbnail: &discord.EmbedResource{
+			URL: *info.ArtworkURL,
+		},
+		Color: embedColor,
+		Footer: &discord.EmbedFooter{
+			Text:    "Requested by " + more.Req.Username,
+			IconURL: more.Req.AvatarURL,
+		},
+	}, true
+}
+
+func (b *Bot) UpdatePlayerMessage(guildId snowflake.ID, idling bool) error {
+	m := b.PlayerMessages[guildId.String()]
+	embed, ok := b.CreatePlayerMessage(guildId, idling)
 
 	if !ok {
 		return errors.New("failed to generate now playing embed")
 	}
 
-	if _, err := b.Client.Rest().GetMessage(info.ChannelId, info.MessageId); err != nil {
-		return err
-	}
-
-	if _, err := b.Client.Rest().UpdateMessage(info.ChannelId, info.MessageId, discord.MessageUpdate{
+	_, err := b.Client.Rest().UpdateMessage(m.ChannelId, m.MessageId, discord.MessageUpdate{
 		Embeds: &[]discord.Embed{embed},
-	}); err != nil {
-		return err
-	}
+	})
 
-	return nil
+	return err
 }
 
-func (b *Bot) CreateQueueMessage(queue *Queue, itemsPerPage int) (embed []discord.Embed, ok bool) {
-	if len(queue.Tracks) <= 0 {
-		return []discord.Embed{}, false
-	}
-
-	embeds := make([]discord.Embed, 0)
-	page := 1
-
-	for i := 0; i < itemsPerPage; i += itemsPerPage {
-		trackSlice := queue.Tracks[i:itemsPerPage]
-		page++
-
-		subEmbedDescription := ""
-
-		for _, v := range trackSlice {
-			info := v.Info
-
-			var more AdditionalTrackData
-
-			err := json.Unmarshal(v.UserData, &more)
-			if err != nil {
-				slog.Error("Failed to unmarshal additional track data", slog.Any("Error", err))
-				continue
-			}
-
-			subEmbedDescription += fmt.Sprintf("`#%v`: %v - %v (%v)\n* Requested by <@%s>", i, info.Title, info.Author, info.Length.String(), more.Member.User.ID)
-		}
-
-		embeds = append(embeds, discord.Embed{
-			Author: &discord.EmbedAuthor{
-				Name: "There are " + strconv.Itoa(len(queue.Tracks)) + " tracks in the queue",
-			},
-			Description: subEmbedDescription,
-			Footer: &discord.EmbedFooter{
-				Text: "Page" + strconv.Itoa(page),
-			},
-		})
-	}
-
-	return embeds, true
-}
-
-func (b *Bot) CreateSongProgressBar(player disgolink.Player, full bool) string {
+// Future me: please forgive me for this terrible code
+// only the current me and god know how this works
+// don't expect to optimize this, you will most likely fail
+//
+// wasted_hours = 4
+func (b *Bot) CreateProgressBar(player disgolink.Player, full bool) string {
 	BEGIN := map[string]string{
 		"0.00": b.ApplicationEmojis["b0"],
 		"0.01": b.ApplicationEmojis["b10"],
@@ -172,18 +241,18 @@ func (b *Bot) CreateSongProgressBar(player disgolink.Player, full bool) string {
 		"10": b.ApplicationEmojis["e100"],
 	}
 
-	fullProgressBar := fmt.Sprintf("%s%s%s", BEGIN["0.1"], repeatString(CENTER["10"], 8), END["10"])
-	emptyProgressBar := fmt.Sprintf("%s%s%s", BEGIN["0.00"], repeatString(CENTER["0"], 8), END["0"])
+	fullBar := BEGIN["0.1"] + utils.RepeatString(CENTER["10"], 8) + END["10"]
+	emptyBar := BEGIN["0.00"] + utils.RepeatString(CENTER["0"], 8) + END["0"]
 
 	position := player.Position()
 	track := player.Track()
 
 	if full {
-		return fullProgressBar
+		return fullBar
 	}
 
 	if track == nil {
-		return emptyProgressBar
+		return emptyBar
 	}
 
 	length := track.Info.Length
@@ -194,16 +263,16 @@ func (b *Bot) CreateSongProgressBar(player disgolink.Player, full bool) string {
 	var begin, center, end string
 
 	if songProgress >= 1 {
-		return fullProgressBar
+		return fullBar
 	}
 
 	if songProgress <= 0 {
-		return emptyProgressBar
+		return emptyBar
 	}
 
 	if songProgress <= 0.1 {
 		begin = BEGIN[fmt.Sprintf("%.2f", songProgress)]
-		center = repeatString(CENTER["0"], 8)
+		center = utils.RepeatString(CENTER["0"], 8)
 		end = END["0"]
 	} else if songProgress > 0.1 && songProgress <= 0.9 {
 		begin = BEGIN["0.1"]
@@ -212,20 +281,20 @@ func (b *Bot) CreateSongProgressBar(player disgolink.Player, full bool) string {
 		rest := int(songProgress*100) % 10
 		repeatRest := 8 - repeat
 
-		center = repeatString(CENTER["10"], repeat)
+		center = utils.RepeatString(CENTER["10"], repeat)
 
 		if rest > 0 {
 			center += CENTER[fmt.Sprintf("%d", rest)]
 		}
 
 		if repeatRest > 0 {
-			center += repeatString(CENTER["0"], repeatRest)
+			center += utils.RepeatString(CENTER["0"], repeatRest)
 		}
 
 		end = END["0"]
 	} else {
 		begin = BEGIN["0.1"]
-		center = repeatString(CENTER["10"], 8)
+		center = utils.RepeatString(CENTER["10"], 8)
 
 		rest := int(math.Floor(songProgress*10)) % 10
 		end = END[fmt.Sprintf("%d", rest)]
@@ -234,97 +303,44 @@ func (b *Bot) CreateSongProgressBar(player disgolink.Player, full bool) string {
 	return begin + center + end
 }
 
-func (b *Bot) CreateNowPlayingMessage(player disgolink.Player, track *lavalink.Track, idling bool) (embed discord.Embed, ok bool) {
-	empty := discord.Embed{}
+func (b Bot) CreateQueueMessage(queue *Queue, itemsPerPage int) (pages []discord.Embed, ok bool) {
+	if len(queue.Tracks) <= 0 {
+		return []discord.Embed{}, false
+	}
 
-	if idling {
-		q := b.Queues.Get(player.GuildID().String())
+	embeds := make([]discord.Embed, 0)
+	page := 1
 
-		if q.PreviousTrack == nil {
-			return discord.NewEmbedBuilder().
-				SetAuthor("Idling...", "", idlingIconUrl).
-				SetDescription("`No previous track found...`").
-				Build(), true
+	for i := 0; i < itemsPerPage; i += itemsPerPage {
+		trackSlice := queue.Tracks[i:itemsPerPage]
+		page++
+
+		subEmbedDescription := ""
+
+		for _, v := range trackSlice {
+			info := v.Info
+
+			var more MoreTrackData
+
+			err := json.Unmarshal(v.UserData, &more)
+			if err != nil {
+				slog.Error("Failed to unmarshal additional track data", slog.Any("Error", err))
+				continue
+			}
+
+			subEmbedDescription += fmt.Sprintf("`#%v`: %v - %v (%v)\n* Requested by <@%s>", i, info.Title, info.Author, info.Length.String(), more.Req.Id)
 		}
 
-		previous := q.PreviousTrack
-		info := previous.Info
-
-		var more AdditionalTrackData
-
-		err := json.Unmarshal(previous.UserData, &more)
-
-		if err != nil {
-			return empty, false
-		}
-
-		bar := b.CreateSongProgressBar(player, true)
-
-		embed := discord.NewEmbedBuilder().
-			SetAuthor("Idling...", "", idlingIconUrl).
-			SetTitle(info.Title).
-			SetURL(*info.URI).
-			SetDescriptionf("By: **%v**\n\n%v\n%s/%s", info.Author, bar, core.FormatTime(track.Info.Length), core.FormatTime(track.Info.Length)).
-			SetThumbnail(*info.ArtworkURL).
-			SetColor(9109708).
-			SetFooterTextf("Requested by %s", more.Member.User.Username).
-			SetFooterIcon(more.Member.User.EffectiveAvatarURL()).
-			Build()
-
-		return embed, true
+		embeds = append(embeds, discord.Embed{
+			Author: &discord.EmbedAuthor{
+				Name: "There are " + strconv.Itoa(len(queue.Tracks)) + " tracks in the queue",
+			},
+			Description: subEmbedDescription,
+			Footer: &discord.EmbedFooter{
+				Text: "Page" + strconv.Itoa(page),
+			},
+		})
 	}
 
-	if track == nil {
-		return discord.Embed{}, true
-	}
-
-	info := track.Info
-	progressBar := b.CreateSongProgressBar(player, false)
-
-	embedColor := 9109708
-	title := "Now playing..."
-	description := fmt.Sprintf("By **%s**\n\n%v\n%s/%s", info.Author, progressBar, core.FormatTime(player.Position()), core.FormatTime(info.Length))
-
-	if info.IsStream {
-		embedColor = 15548997
-		title = "🎥🔴 Playing a live stream..."
-		description = "By: **" + info.Author + "**"
-	}
-
-	if player.Paused() {
-		title = "Paused..."
-	}
-
-	var more AdditionalTrackData
-
-	err := json.Unmarshal(track.UserData, &more)
-
-	if err != nil {
-		return empty, false
-	}
-
-	return discord.NewEmbedBuilder().
-		SetAuthor(title, *info.URI, activeIconUrl).
-		SetTitle(info.Title).
-		SetURL(*info.URI).
-		SetDescription(description).
-		SetThumbnail(*info.ArtworkURL).
-		SetColor(embedColor).
-		SetFooterTextf("Requested by %s", more.Member.User.Username).
-		SetFooterIcon(more.Member.User.EffectiveAvatarURL()).
-		Build(), true
-}
-
-func repeatString(str string, amount int) string {
-	output := ""
-	for i := 0; i < amount; i++ {
-		output += str
-	}
-	return output
-}
-
-func (b *Bot) CheckIfUserInVc(guildId, userId snowflake.ID) bool {
-	_, ok := b.Client.Caches().VoiceState(guildId, userId)
-
-	return ok
+	return embeds, true
 }

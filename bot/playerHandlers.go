@@ -9,7 +9,7 @@ import (
 )
 
 func (b *Bot) OnPlayerPause(player disgolink.Player, event lavalink.PlayerPauseEvent) {
-	err := b.UpdatePlayerMessage(player, player.Track(), false)
+	err := b.UpdatePlayerMessage(player.GuildID(), false)
 	if err != nil {
 		slog.Error("Error while updating player now playing message", slog.String("Event", "OnPlayerPause"), slog.Any("Error", err))
 		return
@@ -17,7 +17,7 @@ func (b *Bot) OnPlayerPause(player disgolink.Player, event lavalink.PlayerPauseE
 }
 
 func (b *Bot) OnPlayerResume(player disgolink.Player, event lavalink.PlayerResumeEvent) {
-	err := b.UpdatePlayerMessage(player, player.Track(), false)
+	err := b.UpdatePlayerMessage(player.GuildID(), false)
 	if err != nil {
 		slog.Error("Error while updating player now playing message", slog.String("Event", "OnPlayerResume"), slog.Any("Error", err))
 		return
@@ -30,9 +30,7 @@ func (b *Bot) OnPlayerUpdate(player disgolink.Player, event lavalink.PlayerUpdat
 		return
 	}
 
-	slog.Info("Updating now playing message")
-
-	err := b.UpdatePlayerMessage(player, player.Track(), false)
+	err := b.UpdatePlayerMessage(player.GuildID(), false)
 	if err != nil {
 		slog.Error("Error while updating player now playing message", slog.String("Event", "OnPlayerUpdate"), slog.Any("Error", err))
 		return
@@ -48,7 +46,7 @@ func (b *Bot) OnTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) 
 	queue := b.Queues.Get(event.GuildID().String())
 
 	if !event.Reason.MayStartNext() {
-		if err := b.UpdatePlayerMessage(player, queue.PreviousTrack, true); err != nil {
+		if err := b.UpdatePlayerMessage(player.GuildID(), true); err != nil {
 			slog.Error("Error while updating player now playing message", slog.String("Event", "OnTrackStart"), slog.Any("Error", err))
 		}
 		return

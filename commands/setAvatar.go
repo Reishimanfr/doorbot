@@ -9,7 +9,7 @@ import (
 	"github.com/disgoorg/json"
 )
 
-func SetAvatar(event *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, b *twm.Bot) {
+func SetAvatar(event *events.ApplicationCommandInteractionCreate, data *discord.SlashCommandInteractionData, b *twm.Bot) {
 	avatarFile, ok := data.OptAttachment("avatar")
 
 	if !ok {

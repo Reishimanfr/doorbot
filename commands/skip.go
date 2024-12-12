@@ -9,29 +9,52 @@ import (
 	"github.com/disgoorg/disgolink/v3/lavalink"
 )
 
-func Skip(event *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, b *twm.Bot) {
-	ok := b.CheckIfUserInVc(*event.GuildID(), event.User().ID)
-
+func Skip(e *events.ApplicationCommandInteractionCreate, data *discord.SlashCommandInteractionData, b *twm.Bot) {
+	memberState, ok := b.Client.Caches().VoiceState(*e.GuildID(), b.Client.ID())
 	if !ok {
-		event.CreateMessage(discord.NewMessageCreateBuilder().
-			SetContent("You must be in a voice channel to use this command.").
-			SetEphemeral(true).
-			Build(),
-		)
+		e.CreateMessage(discord.MessageCreate{
+			Content: "Something went wrong while processing your request. Request ID:",
+			Flags:   discord.MessageFlagEphemeral,
+		})
 		return
 	}
 
-	player := b.Lavalink.Player(*event.GuildID())
+	if memberState.ChannelID == nil {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "You must be in a voice channel to use this command.",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	botState, ok := b.Client.Caches().VoiceState(*e.GuildID(), b.Client.ID())
+	if !ok {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "Something went wrong while processing your request. Request ID:",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	if memberState.ChannelID != botState.ChannelID && botState.ChannelID != nil {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "You must be in the same voice channel to use this command.",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	player := b.Lavalink.Player(*e.GuildID())
 
 	if !player.State().Connected {
-		event.CreateMessage(discord.MessageCreate{
+		e.CreateMessage(discord.MessageCreate{
 			Content: "Player is inactive. Join a voice channel and use `/play` first.",
 			Flags:   discord.MessageFlagEphemeral,
 		})
 		return
 	}
 
-	queue := b.Queues.Get(event.GuildID().String())
+	queue := b.Queues.Get(e.GuildID().String())
 	nextTrack, ok := queue.Next()
 
 	if !ok {
@@ -40,12 +63,12 @@ func Skip(event *events.ApplicationCommandInteractionCreate, data discord.SlashC
 		player.Update(context.Background(), lavalink.WithTrack(nextTrack))
 	}
 
-	event.CreateMessage(discord.MessageCreate{
+	e.CreateMessage(discord.MessageCreate{
 		Content: "Song skipped.",
 		Flags:   discord.MessageFlagEphemeral,
 	})
 
-	event.CreateMessage(discord.NewMessageCreateBuilder().
+	e.CreateMessage(discord.NewMessageCreateBuilder().
 		SetContent("Song skipped.").
 		SetEphemeral(true).
 		Build(),

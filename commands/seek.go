@@ -9,27 +9,53 @@ import (
 	"github.com/disgoorg/disgolink/v3/lavalink"
 )
 
-func Seek(event *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, b *twm.Bot) {
-	player := b.Lavalink.Player(*event.GuildID())
-
-	if !player.State().Connected {
-		event.CreateMessage(discord.MessageCreate{
-			Content: "Player is inactive. Join a voice channel and use `/play` first.",
+func Seek(e *events.ApplicationCommandInteractionCreate, data *discord.SlashCommandInteractionData, b *twm.Bot) {
+	memberState, ok := b.Client.Caches().VoiceState(*e.GuildID(), b.Client.ID())
+	if !ok {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "Something went wrong while processing your request. Request ID:",
 			Flags:   discord.MessageFlagEphemeral,
 		})
 		return
 	}
 
-	if inVc := b.CheckIfUserInVc(*event.GuildID(), event.User().ID); !inVc {
-		event.CreateMessage(discord.MessageCreate{
+	if memberState.ChannelID == nil {
+		e.CreateMessage(discord.MessageCreate{
 			Content: "You must be in a voice channel to use this command.",
 			Flags:   discord.MessageFlagEphemeral,
 		})
 		return
 	}
 
+	botState, ok := b.Client.Caches().VoiceState(*e.GuildID(), b.Client.ID())
+	if !ok {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "Something went wrong while processing your request. Request ID:",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	if memberState.ChannelID != botState.ChannelID && botState.ChannelID != nil {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "You must be in the same voice channel to use this command.",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
+	player := b.Lavalink.Player(*e.GuildID())
+
+	if !player.State().Connected {
+		e.CreateMessage(discord.MessageCreate{
+			Content: "Player is inactive. Join a voice channel and use `/play` first.",
+			Flags:   discord.MessageFlagEphemeral,
+		})
+		return
+	}
+
 	if player.Track() == nil {
-		event.CreateMessage(discord.MessageCreate{
+		e.CreateMessage(discord.MessageCreate{
 			Content: "Nothing is playing right now.",
 			Flags:   discord.MessageFlagEphemeral,
 		})
@@ -54,7 +80,7 @@ func Seek(event *events.ApplicationCommandInteractionCreate, data discord.SlashC
 
 	player.Update(context.Background(), lavalink.WithPosition(lavalink.Second*lavalink.Duration(timeSeconds)))
 
-	event.CreateMessage(discord.MessageCreate{
+	e.CreateMessage(discord.MessageCreate{
 		Content: "Seeked to `" + player.Position().String() + "`.",
 		Flags:   discord.MessageFlagEphemeral,
 	})

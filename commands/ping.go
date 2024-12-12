@@ -7,7 +7,7 @@ import (
 	"github.com/disgoorg/disgo/events"
 )
 
-func Ping(event *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, b *twm.Bot) {
+func Ping(event *events.ApplicationCommandInteractionCreate, data *discord.SlashCommandInteractionData, b *twm.Bot) {
 	event.CreateMessage(discord.MessageCreate{
 		Content: "Pong! My delay estimate is `" + event.Client().Gateway().Latency().String() + "`",
 	})

@@ -7,17 +7,9 @@ import (
 	"github.com/disgoorg/disgo/events"
 )
 
-func Avatar(event *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, b *twm.Bot) {
-	user, userOk := data.OptUser("user")
+func Avatar(event *events.ApplicationCommandInteractionCreate, data *discord.SlashCommandInteractionData, b *twm.Bot) {
+	user, _ := data.OptUser("user")
 	formatStr, _ := data.OptString("format")
-
-	if !userOk {
-		event.CreateMessage(discord.MessageCreate{
-			Content: "User option is empty",
-			Flags:   discord.MessageFlagEphemeral,
-		})
-		return
-	}
 
 	var format discord.FileFormat
 
